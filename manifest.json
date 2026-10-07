@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "X Likes Exporter",
+  "version": "1.0.0",
+  "description": "Scroll your X (Twitter) Likes timeline to the end and export every liked post to JSON.",
+  "minimum_chrome_version": "102",
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "downloads",
+    "clipboardWrite",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://twitter.com/*"
+  ],
+  "action": {
+    "default_title": "X Likes Exporter",
+    "default_popup": "src/popup.html"
+  },
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["src/content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

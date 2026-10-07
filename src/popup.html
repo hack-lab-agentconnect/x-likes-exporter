@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>X Likes Exporter</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>X Likes Exporter</h1>
+      <p class="sub">Scrolls your Likes timeline and exports every post to JSON.</p>
+    </header>
+
+    <section class="stats">
+      <div class="count"><span id="count">0</span><small>liked posts</small></div>
+      <div id="status" class="status">Ready</div>
+    </section>
+
+    <section class="controls">
+      <button id="start" class="primary">Start scrolling</button>
+      <button id="stop" disabled>Stop</button>
+    </section>
+
+    <details class="settings">
+      <summary>Settings</summary>
+      <label>Min delay (ms)<input id="minDelay" type="number" value="900" min="200" step="100" /></label>
+      <label>Max delay (ms)<input id="maxDelay" type="number" value="2600" min="300" step="100" /></label>
+      <label>Stop after stalled rounds<input id="maxStagnant" type="number" value="8" min="2" step="1" /></label>
+    </details>
+
+    <section class="export">
+      <button id="copy">Copy JSON</button>
+      <button id="download">Download JSON</button>
+      <button id="clear" class="ghost">Clear</button>
+    </section>
+
+    <p id="hint" class="hint"></p>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

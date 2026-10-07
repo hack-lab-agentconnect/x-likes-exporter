@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "X Likes Exporter",
-  "version": "1.0.0",
-  "description": "Scroll your X (Twitter) Likes timeline to the end and export every liked post to JSON.",
+  "version": "1.1.0",
+  "description": "Export the people who liked an X (Twitter) post — or your own liked posts — to JSON by auto-scrolling the list.",
   "minimum_chrome_version": "102",
   "permissions": [
     "storage",

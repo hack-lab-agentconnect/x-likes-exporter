@@ -2,9 +2,11 @@
 
 const META_KEY = "xle_meta";
 const RECORDS_KEY = "xle_records";
-const GENERATOR = "X Likes Exporter v1.0.0";
+const GENERATOR = "X Likes Exporter v1.1.0";
 const matchesX = (url) => /^https:\/\/(x|twitter)\.com\//.test(url || "");
-const onLikesPage = (url) => /^https:\/\/(x|twitter)\.com\/.+\/likes/.test(url || "");
+const onLikesPage = (url) =>
+  /^https:\/\/(x|twitter)\.com\/[^/]+\/status\/\d+\/likes/.test(url || "") ||
+  /^https:\/\/(x|twitter)\.com\/[^/]+\/likes(\/)?(\?|#|$)/.test(url || "");
 
 const $ = (id) => document.getElementById(id);
 
@@ -17,6 +19,7 @@ function setHint(text, isError) {
 function applyMeta(meta) {
   if (!meta) return;
   $("count").textContent = meta.count ?? 0;
+  $("countlabel").textContent = meta.kind === "liked_posts" ? "liked posts" : "likers";
   $("status").textContent = meta.message || meta.status || "Ready";
   $("start").disabled = !!meta.running;
   $("stop").disabled = !meta.running;
@@ -42,15 +45,21 @@ async function buildExport() {
     chrome.storage.local.get(META_KEY),
   ]);
   const meta = store[META_KEY] || {};
-  return {
+  const kind = meta.kind || "likers";
+  const payload = {
     meta: {
       source: meta.source || null,
+      type: kind,
+      tweetId: meta.tweetId || null,
+      tweetUrl: meta.tweetUrl || null,
       exportedAt: new Date().toISOString(),
       count: records.length,
       generator: GENERATOR,
     },
-    likes: records,
   };
+  if (kind === "liked_posts") payload.likes = records;
+  else payload.likers = records;
+  return payload;
 }
 
 async function activeTab() {
@@ -78,10 +87,10 @@ async function ensureContent(tab) {
 $("start").addEventListener("click", async () => {
   const tab = await activeTab();
   if (!tab || !matchesX(tab.url)) {
-    return setHint("Open your Likes page first: https://x.com/<you>/likes", true);
+    return setHint("Open a post's likes page: https://x.com/<user>/status/<id>/likes", true);
   }
   if (!onLikesPage(tab.url)) {
-    return setHint("You are on X, but not the Likes tab. Go to /likes first.", true);
+    return setHint("Go to the likes page: a post's /likes URL, or a profile's Likes tab.", true);
   }
   const ok = await ensureContent(tab);
   if (!ok) {
@@ -112,13 +121,16 @@ $("stop").addEventListener("click", async () => {
   setHint("Stopped.");
 });
 
+const countOf = (data) => (data.likers || data.likes || []).length;
+const nounOf = (data) => (data.meta.type === "liked_posts" ? "liked posts" : "likers");
+
 $("copy").addEventListener("click", async () => {
   const data = await buildExport();
-  if (!data.likes.length) return setHint("Nothing to copy yet.", true);
+  if (!countOf(data)) return setHint("Nothing to copy yet.", true);
   const json = JSON.stringify(data, null, 2);
   try {
     await navigator.clipboard.writeText(json);
-    setHint(`Copied ${data.likes.length} liked posts to clipboard.`);
+    setHint(`Copied ${countOf(data)} ${nounOf(data)} to clipboard.`);
   } catch {
     setHint("Clipboard was blocked — use Download JSON instead.", true);
   }
@@ -126,7 +138,7 @@ $("copy").addEventListener("click", async () => {
 
 $("download").addEventListener("click", async () => {
   const data = await buildExport();
-  if (!data.likes.length) return setHint("Nothing to download yet.", true);
+  if (!countOf(data)) return setHint("Nothing to download yet.", true);
   const json = JSON.stringify(data, null, 2);
   const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -137,7 +149,7 @@ $("download").addEventListener("click", async () => {
       filename: `x-likes-${stamp}.json`,
       saveAs: true,
     });
-    setHint(`Downloaded ${data.likes.length} liked posts.`);
+    setHint(`Downloaded ${countOf(data)} ${nounOf(data)}.`);
   } catch {
     setHint("Download failed.", true);
   } finally {

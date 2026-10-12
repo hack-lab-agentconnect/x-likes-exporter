@@ -70,7 +70,7 @@ Raise the delays if a very large list stops early — X needs time to load each 
     "list": "followers",
     "exportedAt": "2026-10-07T18:50:00.000Z",
     "count": 812,
-    "generator": "X Likes Exporter v1.3.0"
+    "generator": "X Likes Exporter v1.3.1"
   },
   "followers": [
     {

@@ -7,7 +7,7 @@
   const META_KEY = "xle_meta";
   const RECORDS_KEY = "xle_records";
   const PLAN_KEY = "xle_plan";
-  const GENERATOR = "X Likes Exporter v1.3.0";
+  const GENERATOR = "X Likes Exporter v1.3.1";
 
   const state = {
     running: false,
@@ -26,7 +26,7 @@
     plan: null,
     nextList: null,
     aborted: false,
-    config: { minDelay: 900, maxDelay: 2400, maxStagnant: 6 },
+    config: { minDelay: 900, maxDelay: 2400, maxStagnant: 6, maxRounds: 2000 },
   };
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -542,8 +542,6 @@
     updateBadge();
     broadcast();
 
-    let lastScroll = -1;
-
     while (state.running) {
       const before = state.records.size;
       collect();
@@ -551,28 +549,32 @@
 
       const grew = state.records.size > before;
       const reachedBottom = atBottom();
-      const scrollPos = (() => {
-        const root = getScrollRoot();
-        return root ? root.scrollTop : window.scrollY;
-      })();
-      const moved = scrollPos > lastScroll + 2;
-      lastScroll = scrollPos;
 
+      // Count consecutive rounds with no new items. This is the reliable
+      // "end of list" signal — X's virtualized list keeps the scroll
+      // position shifting, so "at bottom AND not moving" never triggers.
       if (grew) state.stagnant = 0;
-      else if (reachedBottom && !moved) state.stagnant += 1;
-      else state.stagnant = 0;
+      else state.stagnant += 1;
 
       state.message = progressMessage();
       persist();
       updateBadge();
       broadcast();
 
+      // At the bottom, stop quickly; otherwise allow more slack for slow loads.
+      const stalledLimit = reachedBottom ? 2 : state.config.maxStagnant;
       if (caughtUp() && state.stagnant >= 1) {
         state.message = "Reached the end of the list.";
         break;
       }
-      if (state.stagnant >= state.config.maxStagnant) {
-        state.message = "No more items loading — stopping.";
+      if (state.stagnant >= stalledLimit) {
+        state.message = reachedBottom
+          ? "Reached the bottom of the list."
+          : "No more items loading — stopping.";
+        break;
+      }
+      if (state.rounds >= state.config.maxRounds) {
+        state.message = "Round limit reached — stopping.";
         break;
       }
 

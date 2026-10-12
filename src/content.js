@@ -6,13 +6,15 @@
 
   const META_KEY = "xle_meta";
   const RECORDS_KEY = "xle_records";
-  const GENERATOR = "X Likes Exporter v1.1.0";
+  const GENERATOR = "X Likes Exporter v1.2.0";
 
   const state = {
     running: false,
     status: "idle",
     message: "Ready",
-    kind: null,
+    kind: null, // "likers" | "followers" | "liked_posts"
+    list: null, // "followers" | "verified_followers" (for kind === "followers")
+    profile: null,
     tweetId: null,
     tweetUrl: null,
     startedAt: null,
@@ -35,22 +37,30 @@
     }
   }
 
+  const keyField = () => (state.kind === "liked_posts" ? "id" : "username");
+  const keyOf = (rec) => rec && rec[keyField()];
+
   // ── Page type ─────────────────────────────────────────────────────────────
   // "likers"      → x.com/<user>/status/<id>/likes   (people who liked a post)
-  // "liked_posts" → x.com/<user>/likes               (posts you liked)
-  function detectKind() {
+  // "followers"   → x.com/<user>/followers | /verified_followers
+  // "liked_posts" → x.com/<user>/likes               (posts a user liked)
+  function pageContext() {
     const p = location.pathname;
-    if (/\/status\/\d+\/likes\/?$/.test(p)) return "likers";
-    if (/\/likes\/?$/.test(p) && !/\/status\//.test(p)) return "liked_posts";
-    return null;
+    let m = p.match(/^\/([^/]+)\/status\/(\d+)\/likes\/?$/);
+    if (m) {
+      return { kind: "likers", list: null, profile: m[1], tweetId: m[2], tweetUrl: `https://x.com/${m[1]}/status/${m[2]}` };
+    }
+    m = p.match(/^\/([^/]+)\/verified_followers\/?$/);
+    if (m) return { kind: "followers", list: "verified_followers", profile: m[1], tweetId: null, tweetUrl: `https://x.com/${m[1]}/verified_followers` };
+    m = p.match(/^\/([^/]+)\/followers\/?$/);
+    if (m) return { kind: "followers", list: "followers", profile: m[1], tweetId: null, tweetUrl: `https://x.com/${m[1]}/followers` };
+    m = p.match(/^\/([^/]+)\/likes\/?$/);
+    if (m) return { kind: "liked_posts", list: null, profile: m[1], tweetId: null, tweetUrl: `https://x.com/${m[1]}/likes` };
+    return { kind: null, list: null, profile: null, tweetId: null, tweetUrl: null };
   }
 
-  function pageContext() {
-    const m = location.pathname.match(/^\/([^/]+)\/status\/(\d+)\/likes\/?$/);
-    if (m) return { kind: "likers", tweetId: m[2], tweetUrl: `https://x.com/${m[1]}/status/${m[2]}` };
-    const p = location.pathname.match(/^\/([^/]+)\/likes\/?$/);
-    if (p) return { kind: "liked_posts", tweetId: null, tweetUrl: `https://x.com/${p[1]}/likes` };
-    return { kind: null, tweetId: null, tweetUrl: null };
+  function detectKind() {
+    return pageContext().kind;
   }
 
   // ── Scrolling the right element ───────────────────────────────────────────
@@ -58,18 +68,24 @@
     if (!el || el === document.body || el === document.documentElement) return false;
     const s = getComputedStyle(el);
     const oy = s.overflowY;
+    return (oy === "auto" || oy === "scroll" || oy === "overlay") && el.scrollHeight > el.clientHeight + 8;
+  }
+
+  // Scope to the open dialog when the list is in a modal, else the document.
+  function scopeRoot() {
     return (
-      (oy === "auto" || oy === "scroll" || oy === "overlay") &&
-      el.scrollHeight > el.clientHeight + 8
+      document.querySelector('[aria-modal="true"]') ||
+      document.querySelector('[role="dialog"]') ||
+      document
     );
   }
 
   function getScrollRoot() {
-    const known = document.querySelector('[aria-label="Timeline: Liked by"]');
-    if (isScrollable(known)) return known;
-
     const modal = document.querySelector('[aria-modal="true"]');
     if (isScrollable(modal)) return modal;
+
+    const known = document.querySelector('[aria-label="Timeline: Liked by"]');
+    if (isScrollable(known)) return known;
 
     const anchor =
       document.querySelector('[data-testid="UserCell"]') ||
@@ -96,10 +112,7 @@
   // One natural, human-sized step (not a teleport to the bottom).
   function stepScroll() {
     const root = getScrollRoot();
-    const step = Math.max(
-      320,
-      Math.floor(viewportHeight() * (0.6 + Math.random() * 0.3))
-    );
+    const step = Math.max(320, Math.floor(viewportHeight() * (0.6 + Math.random() * 0.3)));
     const smooth = { top: step, behavior: "smooth" };
     if (root) root.scrollBy(smooth);
     else window.scrollBy(smooth);
@@ -113,7 +126,7 @@
     else window.scrollBy(smooth);
   }
 
-  // ── Extraction: likers ────────────────────────────────────────────────────
+  // ── Extraction: users (likers AND followers) ──────────────────────────────
   function extractUser(cell) {
     let handle = "";
     const anchors = cell.querySelectorAll('a[href^="/"]');
@@ -144,7 +157,7 @@
     const avatarEl = cell.querySelector('img[src*="profile_images"]');
     const verified = !!cell.querySelector('[aria-label*="Verified" i]');
 
-    return {
+    const rec = {
       handle: `@${handle}`,
       username: handle,
       displayName: displayName || null,
@@ -153,10 +166,15 @@
       avatar: avatarEl ? avatarEl.src : null,
       profileUrl: `https://x.com/${handle}`,
     };
+    if (state.kind === "followers") {
+      rec.list = state.list;
+      rec.fromVerifiedList = state.list === "verified_followers";
+    }
+    return rec;
   }
 
-  function collectLikers() {
-    const cells = document.querySelectorAll('[data-testid="UserCell"]');
+  function collectUsers() {
+    const cells = scopeRoot().querySelectorAll('[data-testid="UserCell"]');
     let added = 0;
     cells.forEach((cell) => {
       const u = extractUser(cell);
@@ -266,7 +284,7 @@
   }
 
   function collectPosts() {
-    const articles = document.querySelectorAll('article[data-testid="tweet"]');
+    const articles = scopeRoot().querySelectorAll('article[data-testid="tweet"]');
     let added = 0;
     articles.forEach((article) => {
       const rec = extractTweet(article);
@@ -279,12 +297,13 @@
   }
 
   function collect() {
-    return state.kind === "likers" ? collectLikers() : collectPosts();
+    return state.kind === "liked_posts" ? collectPosts() : collectUsers();
   }
 
   // ── Bottom detection ──────────────────────────────────────────────────────
   function caughtUp() {
-    const t = document.body.innerText || "";
+    const scope = scopeRoot();
+    const t = (scope === document ? document.body : scope).innerText || "";
     return /You're all caught up|You’ve reached the end|You've reached the end|You’re all caught up|No more results/i.test(
       t
     );
@@ -297,6 +316,8 @@
       status: state.status,
       message: state.message,
       kind: state.kind,
+      list: state.list,
+      profile: state.profile,
       tweetId: state.tweetId,
       tweetUrl: state.tweetUrl,
       count: state.records.size,
@@ -340,6 +361,25 @@
     }
   }
 
+  // Merge with a previous run against the same target so a second pass
+  // (e.g. regular followers after verified followers) adds to one collection.
+  async function seedFromStorage() {
+    try {
+      const store = await chrome.storage.local.get([META_KEY, RECORDS_KEY]);
+      const prev = store[META_KEY];
+      if (!prev || prev.kind !== state.kind) return;
+      if (state.kind === "likers" && prev.tweetId !== state.tweetId) return;
+      if (state.kind === "followers" && prev.profile !== state.profile) return;
+      const recs = store[RECORDS_KEY] || [];
+      recs.forEach((r) => {
+        const k = keyOf(r);
+        if (k) state.records.set(k, r);
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
   let badge = null;
   function updateBadge() {
     if (!badge) {
@@ -357,27 +397,49 @@
         borderRadius: "10px",
         boxShadow: "0 6px 20px rgba(0,0,0,.45)",
         pointerEvents: "none",
-        maxWidth: "290px",
+        maxWidth: "300px",
         letterSpacing: ".1px",
       });
       document.documentElement.appendChild(badge);
     }
-    const noun = state.kind === "liked_posts" ? "liked posts" : "likers";
+    const noun = state.kind === "liked_posts" ? "liked posts" : state.kind === "followers" ? "followers" : "likers";
     const phase = state.running ? "scrolling…" : state.status;
     badge.textContent = `X Likes Exporter — ${state.records.size} ${noun} · ${phase}`;
   }
 
+  function progressMessage() {
+    if (state.kind === "followers") {
+      let v = 0;
+      state.records.forEach((r) => r.fromVerifiedList && (v += 1));
+      return `Collected ${state.records.size} followers (${v} verified · ${state.records.size - v} regular) (round ${state.rounds})`;
+    }
+    const noun = state.kind === "liked_posts" ? "liked posts" : "likers";
+    return `Collected ${state.records.size} ${noun} (round ${state.rounds})`;
+  }
+
   // ── Main loop ─────────────────────────────────────────────────────────────
-  async function run() {
+  async function run(mode) {
     if (state.running) return;
     const ctx = pageContext();
     if (!ctx.kind) {
+      state.kind = null;
       state.status = "error";
-      state.message = "Open a post's /likes page (or a profile's Likes tab).";
+      state.message = "Open a /likes, /followers or /verified_followers page.";
       updateBadge();
+      broadcast();
       return;
     }
+    if (mode && mode !== "auto" && mode !== ctx.kind) {
+      state.status = "error";
+      state.message = `This is a "${ctx.kind}" page, but mode is "${mode}".`;
+      updateBadge();
+      broadcast();
+      return;
+    }
+
     state.kind = ctx.kind;
+    state.list = ctx.list;
+    state.profile = ctx.profile;
     state.tweetId = ctx.tweetId;
     state.tweetUrl = ctx.tweetUrl;
 
@@ -388,6 +450,10 @@
     state.finishedAt = null;
     state.rounds = 0;
     state.stagnant = 0;
+    updateBadge();
+    broadcast();
+
+    await seedFromStorage();
     updateBadge();
     broadcast();
 
@@ -411,8 +477,7 @@
       else if (reachedBottom && !moved) state.stagnant += 1;
       else state.stagnant = 0;
 
-      const noun = state.kind === "liked_posts" ? "liked posts" : "likers";
-      state.message = `Collected ${state.records.size} ${noun} (round ${state.rounds})`;
+      state.message = progressMessage();
       persist();
       updateBadge();
       broadcast();
@@ -452,7 +517,7 @@
         break;
       case "XLE_START":
         if (msg.config) Object.assign(state.config, msg.config);
-        if (!state.running) run();
+        if (!state.running) run(msg.mode || "auto");
         sendResponse({ ok: true, running: true });
         break;
       case "XLE_STOP":

@@ -2,10 +2,12 @@
 
 const META_KEY = "xle_meta";
 const RECORDS_KEY = "xle_records";
-const GENERATOR = "X Likes Exporter v1.1.0";
+const GENERATOR = "X Likes Exporter v1.2.0";
 const matchesX = (url) => /^https:\/\/(x|twitter)\.com\//.test(url || "");
 const onLikesPage = (url) =>
   /^https:\/\/(x|twitter)\.com\/[^/]+\/status\/\d+\/likes/.test(url || "") ||
+  /^https:\/\/(x|twitter)\.com\/[^/]+\/verified_followers/.test(url || "") ||
+  /^https:\/\/(x|twitter)\.com\/[^/]+\/followers/.test(url || "") ||
   /^https:\/\/(x|twitter)\.com\/[^/]+\/likes(\/)?(\?|#|$)/.test(url || "");
 
 const $ = (id) => document.getElementById(id);
@@ -19,7 +21,8 @@ function setHint(text, isError) {
 function applyMeta(meta) {
   if (!meta) return;
   $("count").textContent = meta.count ?? 0;
-  $("countlabel").textContent = meta.kind === "liked_posts" ? "liked posts" : "likers";
+  $("countlabel").textContent =
+    meta.kind === "liked_posts" ? "liked posts" : meta.kind === "followers" ? "followers" : "likers";
   $("status").textContent = meta.message || meta.status || "Ready";
   $("start").disabled = !!meta.running;
   $("stop").disabled = !meta.running;
@@ -50,6 +53,8 @@ async function buildExport() {
     meta: {
       source: meta.source || null,
       type: kind,
+      profile: meta.profile || null,
+      list: meta.list || null,
       tweetId: meta.tweetId || null,
       tweetUrl: meta.tweetUrl || null,
       exportedAt: new Date().toISOString(),
@@ -58,6 +63,7 @@ async function buildExport() {
     },
   };
   if (kind === "liked_posts") payload.likes = records;
+  else if (kind === "followers") payload.followers = records;
   else payload.likers = records;
   return payload;
 }
@@ -87,10 +93,10 @@ async function ensureContent(tab) {
 $("start").addEventListener("click", async () => {
   const tab = await activeTab();
   if (!tab || !matchesX(tab.url)) {
-    return setHint("Open a post's likes page: https://x.com/<user>/status/<id>/likes", true);
+    return setHint("Open an X likes/followers page: /status/<id>/likes, /followers, or /verified_followers.", true);
   }
   if (!onLikesPage(tab.url)) {
-    return setHint("Go to the likes page: a post's /likes URL, or a profile's Likes tab.", true);
+    return setHint("Go to a post's /likes, or a profile's /followers or /verified_followers.", true);
   }
   const ok = await ensureContent(tab);
   if (!ok) {
@@ -101,8 +107,9 @@ $("start").addEventListener("click", async () => {
     maxDelay: Number($("maxDelay").value) || 2600,
     maxStagnant: Number($("maxStagnant").value) || 8,
   };
+  const mode = $("mode").value;
   try {
-    await chrome.tabs.sendMessage(tab.id, { type: "XLE_START", config });
+    await chrome.tabs.sendMessage(tab.id, { type: "XLE_START", config, mode });
     setHint("Scrolling. The on-page badge shows live progress; keep the tab open.");
   } catch {
     setHint("Could not reach the page. Reload the X tab and try again.", true);
@@ -121,8 +128,9 @@ $("stop").addEventListener("click", async () => {
   setHint("Stopped.");
 });
 
-const countOf = (data) => (data.likers || data.likes || []).length;
-const nounOf = (data) => (data.meta.type === "liked_posts" ? "liked posts" : "likers");
+const countOf = (data) => (data.likers || data.followers || data.likes || []).length;
+const nounOf = (data) =>
+  data.meta.type === "liked_posts" ? "liked posts" : data.meta.type === "followers" ? "followers" : "likers";
 
 $("copy").addEventListener("click", async () => {
   const data = await buildExport();

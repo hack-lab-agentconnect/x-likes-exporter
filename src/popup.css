@@ -113,6 +113,27 @@ button.ghost {
   gap: 8px;
 }
 
+.mode {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mode select {
+  flex: 1;
+  max-width: 190px;
+  padding: 7px 9px;
+  background: #0e141b;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12.5px;
+}
+
 .settings {
   margin: 12px 0;
   padding: 10px 12px;

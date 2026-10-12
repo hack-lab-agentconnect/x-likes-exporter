@@ -1,13 +1,17 @@
 # X Likes Exporter
 
-A small Chrome (Manifest V3) extension that **auto-scrolls an X / Twitter likes page to the bottom, collects everything it renders, and lets you copy or download the result as JSON.**
+A small Chrome (Manifest V3) extension that **auto-scrolls an X / Twitter list page to the bottom, collects everything it renders, and lets you copy or download the result as JSON.**
 
-It supports two kinds of likes page, auto-detected from the URL:
+It supports likers, followers, and liked posts — auto-detected from the URL, or chosen with the **Extract** dropdown in the popup. It works whether the list opens as a **full page or inside a modal** (e.g. clicking a post's likes, or a profile's Followers).
 
 | URL | What it exports |
 | --- | --- |
-| `https://x.com/<user>/status/<id>/likes` | **The people who liked that post** (likers: handle, name, bio, verified, avatar, profile URL) |
-| `https://x.com/<user>/likes` | **The posts that user liked** (author, text, timestamp, media, engagement counts) |
+| `https://x.com/<user>/status/<id>/likes` | **The people who liked that post** (likers) |
+| `https://x.com/<user>/followers` | **The profile's followers** |
+| `https://x.com/<user>/verified_followers` | **The profile's verified followers** |
+| `https://x.com/<user>/likes` | **The posts that user liked** |
+
+Followers from the `followers` and `verified_followers` pages are collected into **one merged, de-duplicated list** (dedupe is by handle — the same method used for likers). Each record is tagged with which list it came from.
 
 It runs entirely in your browser while you are already signed into X. No servers, no API keys, no network calls beyond X itself.
 
@@ -17,19 +21,24 @@ It runs entirely in your browser while you are already signed into X. No servers
 2. Open `chrome://extensions` in Chrome.
 3. Turn on **Developer mode** (top-right).
 4. Click **Load unpacked** and select this folder (the one containing `manifest.json`).
-5. Open a likes page, e.g. `https://x.com/<user>/status/<id>/likes`.
+5. Open a list page, e.g. `https://x.com/<user>/followers`.
 
 > After updating the extension, click the reload icon on `chrome://extensions` and **hard-reload the X tab** so the new content script is injected.
 
 ## Use
 
-1. Open a post's likes page (`…/status/<id>/likes`) or a profile's Likes tab (`…/<user>/likes`).
-2. Click the extension's toolbar icon and press **Start scrolling**.
-   - The page scrolls in **small, natural steps at randomized intervals** so X keeps lazy-loading the virtualized list.
+1. Open one of the pages above (or open the same list as a modal from a profile/post).
+2. Click the extension's toolbar icon.
+3. In **Extract**, pick `Auto (from page)`, `Extract Likers`, `Extract Followers`, or `Extract Liked posts`, then press **Start scrolling**.
+   - The list scrolls in **small, natural steps at randomized intervals** so X keeps lazy-loading the virtualized rows.
    - It stops automatically when the list stops growing (or you press **Stop**).
    - The on-page badge (bottom-right) shows how many items have been extracted so far.
-3. Press **Copy JSON** to copy to your clipboard, or **Download JSON** to save a file.
-4. The popup shows **how many items were extracted**.
+4. Press **Copy JSON** to copy to your clipboard, or **Download JSON** to save a file.
+5. The popup shows **how many items were extracted** (for followers: verified vs regular).
+
+### Merging regular + verified followers
+
+Run once on `/followers` and once on `/verified_followers` (both in **Extract Followers** mode). The second run **merges into the first collection** and de-duplicates by handle, so you end up with one list containing both groups. Use **Clear** to start a fresh collection.
 
 ### Settings
 
@@ -43,20 +52,20 @@ Raise the delays if a very large list stops early — X needs time to load each 
 
 ## Output format
 
-**Likers page** (`/status/<id>/likes`):
+**Likers** (`/status/<id>/likes`) and **Followers** (`/followers`, `/verified_followers`) share a user shape:
 
 ```json
 {
   "meta": {
-    "source": "https://x.com/user/status/123/likes",
-    "type": "likers",
-    "tweetId": "123",
-    "tweetUrl": "https://x.com/user/status/123",
+    "source": "https://x.com/user/followers",
+    "type": "followers",
+    "profile": "user",
+    "list": "followers",
     "exportedAt": "2026-10-07T18:50:00.000Z",
-    "count": 421,
-    "generator": "X Likes Exporter v1.1.0"
+    "count": 812,
+    "generator": "X Likes Exporter v1.2.0"
   },
-  "likers": [
+  "followers": [
     {
       "handle": "@someone",
       "username": "someone",
@@ -64,17 +73,21 @@ Raise the delays if a very large list stops early — X needs time to load each 
       "bio": "Builder. Coffee. Code.",
       "verified": false,
       "avatar": "https://pbs.twimg.com/profile_images/…jpg",
-      "profileUrl": "https://x.com/someone"
+      "profileUrl": "https://x.com/someone",
+      "list": "followers",
+      "fromVerifiedList": false
     }
   ]
 }
 ```
 
-**Profile Likes tab** (`/<user>/likes`):
+For likers the key is `likers` and records omit `list`/`fromVerifiedList`.
+
+**Profile Likes tab** (`/<user>/likes`) exports posts under `likes`:
 
 ```json
 {
-  "meta": { "type": "liked_posts", "count": 1234, "…": "…" },
+  "meta": { "type": "liked_posts", "count": 1234 },
   "likes": [
     {
       "id": "1840000000000000000",
@@ -95,10 +108,11 @@ Missing values are `null`, or omitted (`repostedBy`, `media`).
 
 ## How it works
 
-- `src/content.js` runs on `x.com` / `twitter.com`. It detects the page type, finds the correct scroll container, and repeatedly: reads the DOM → de-duplicates → scrolls one human-sized step (`~60–90%` of the viewport) → waits a random interval. It stops when the item count, scroll position and document height stop changing.
-  - On a likers page it reads `[data-testid="UserCell"]`; on a profile Likes tab it reads `article[data-testid="tweet"]`.
-  - The scroll container is auto-detected (`[aria-label="Timeline: Liked by"]`, the dialog, a scrollable ancestor of the rows, else the window), so it works whether the list opens as a page or a modal.
-- `src/popup.{html,css,js}` is the control panel: start/stop, live count, copy, download, clear.
+- `src/content.js` runs on `x.com` / `twitter.com`. It detects the page type, finds the correct scroll container, and repeatedly: reads the DOM → de-duplicates → scrolls one human-sized step (`~60–90%` of the viewport) → waits a random interval. It stops when the item count and scroll position stop changing.
+  - Likers and followers are read from `[data-testid="UserCell"]`; liked posts from `article[data-testid="tweet"]`.
+  - When the list is inside a modal, collection is scoped to the dialog (`[aria-modal="true"]` / `[role="dialog"]`) and the scroll container is auto-detected (`[aria-label="Timeline: Liked by"]`, the dialog, a scrollable ancestor of the rows, else the window) — so it works as a page or a modal.
+  - On start it merges with a previous run against the same target (same tweet for likers, same profile for followers), so verified + regular followers build one de-duplicated collection.
+- `src/popup.{html,css,js}` is the control panel: mode select, start/stop, live count, copy, download, clear.
 - Data is mirrored into `chrome.storage.local` (`xle_meta` + `xle_records`) so the popup can read it live.
 
 ## Notes & limits

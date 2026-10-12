@@ -6,7 +6,8 @@
 
   const META_KEY = "xle_meta";
   const RECORDS_KEY = "xle_records";
-  const GENERATOR = "X Likes Exporter v1.2.0";
+  const PLAN_KEY = "xle_plan";
+  const GENERATOR = "X Likes Exporter v1.3.0";
 
   const state = {
     running: false,
@@ -22,6 +23,9 @@
     rounds: 0,
     stagnant: 0,
     records: new Map(),
+    plan: null,
+    nextList: null,
+    aborted: false,
     config: { minDelay: 900, maxDelay: 2400, maxStagnant: 6 },
   };
 
@@ -408,17 +412,86 @@
   }
 
   function progressMessage() {
+    const tail = state.nextList ? ` · next: ${state.nextList}` : "";
     if (state.kind === "followers") {
       let v = 0;
       state.records.forEach((r) => r.fromVerifiedList && (v += 1));
-      return `Collected ${state.records.size} followers (${v} verified · ${state.records.size - v} regular) (round ${state.rounds})`;
+      return `Collected ${state.records.size} followers (${v} verified · ${state.records.size - v} regular) (round ${state.rounds})${tail}`;
     }
     const noun = state.kind === "liked_posts" ? "liked posts" : "likers";
-    return `Collected ${state.records.size} ${noun} (round ${state.rounds})`;
+    return `Collected ${state.records.size} ${noun} (round ${state.rounds})${tail}`;
+  }
+
+  // ── Two-list plan (regular + verified followers) ──────────────────────────
+  // Persisted so it survives the page reload when we navigate to the other list.
+  const otherList = (list) => (list === "followers" ? "verified_followers" : "followers");
+
+  async function setupPlan(isAuto) {
+    const other = otherList(state.list);
+    const store = await chrome.storage.local.get(PLAN_KEY);
+    const plan = store[PLAN_KEY];
+    if (isAuto && plan && plan.profile === state.profile) {
+      state.nextList = plan.next || null;
+      return; // continuation plan already set by the previous page
+    }
+    const fresh = { profile: state.profile, todo: [other], next: null, at: Date.now() };
+    storageSet({ [PLAN_KEY]: fresh });
+    state.nextList = other;
+  }
+
+  async function advancePlanAndNavigate() {
+    const store = await chrome.storage.local.get(PLAN_KEY);
+    const plan = store[PLAN_KEY];
+    if (!plan || plan.profile !== state.profile) return;
+    const todo = (plan.todo || []).filter((l) => l !== state.list);
+    if (!todo.length) {
+      try {
+        await chrome.storage.local.remove(PLAN_KEY);
+      } catch {
+        /* ignore */
+      }
+      state.nextList = null;
+      state.message = "Done — all follower lists collected.";
+      persist(true);
+      updateBadge();
+      broadcast();
+      return;
+    }
+    const next = todo[0];
+    storageSet({ [PLAN_KEY]: { profile: state.profile, todo: todo.slice(1), next, at: Date.now() } });
+    state.nextList = next;
+    state.message = `Finished ${state.list}. Opening ${next}…`;
+    persist(true);
+    updateBadge();
+    broadcast();
+    await sleep(1200);
+    location.href = `/${state.profile}/${next}`;
+  }
+
+  async function maybeAutoRun() {
+    try {
+      const store = await chrome.storage.local.get(PLAN_KEY);
+      const plan = store[PLAN_KEY];
+      if (!plan || !plan.profile) return;
+      if (Date.now() - (plan.at || 0) > 15 * 60 * 1000) {
+        await chrome.storage.local.remove(PLAN_KEY);
+        return;
+      }
+      const ctx = pageContext();
+      if (ctx.kind !== "followers" || ctx.profile !== plan.profile) return;
+      if (plan.next !== ctx.list) return;
+      storageSet({
+        [PLAN_KEY]: { profile: plan.profile, todo: (plan.todo || []).filter((l) => l !== ctx.list), next: null, at: Date.now() },
+      });
+      await sleep(1500);
+      run("followers", { auto: true });
+    } catch {
+      /* ignore */
+    }
   }
 
   // ── Main loop ─────────────────────────────────────────────────────────────
-  async function run(mode) {
+  async function run(mode, opts = {}) {
     if (state.running) return;
     const ctx = pageContext();
     if (!ctx.kind) {
@@ -444,12 +517,24 @@
     state.tweetUrl = ctx.tweetUrl;
 
     state.running = true;
+    state.aborted = false;
     state.status = "running";
     state.message = "Scrolling…";
     state.startedAt = Date.now();
     state.finishedAt = null;
     state.rounds = 0;
     state.stagnant = 0;
+
+    if (state.kind === "followers") {
+      await setupPlan(!!opts.auto);
+    } else {
+      try {
+        await chrome.storage.local.remove(PLAN_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+
     updateBadge();
     broadcast();
 
@@ -507,6 +592,10 @@
     persist(true);
     updateBadge();
     broadcast();
+
+    if (!state.aborted && state.kind === "followers") {
+      await advancePlanAndNavigate();
+    }
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -522,8 +611,15 @@
         break;
       case "XLE_STOP":
         state.running = false;
+        state.aborted = true;
         state.status = "done";
         state.message = "Stopped.";
+        state.nextList = null;
+        try {
+          chrome.storage.local.remove(PLAN_KEY);
+        } catch {
+          /* ignore */
+        }
         persist(true);
         updateBadge();
         broadcast();
@@ -535,12 +631,19 @@
       case "XLE_CLEAR":
         state.records.clear();
         state.running = false;
+        state.aborted = true;
         state.status = "idle";
         state.message = "Cleared.";
         state.rounds = 0;
         state.stagnant = 0;
         state.startedAt = null;
         state.finishedAt = null;
+        state.nextList = null;
+        try {
+          chrome.storage.local.remove(PLAN_KEY);
+        } catch {
+          /* ignore */
+        }
         persist(true);
         updateBadge();
         broadcast();
@@ -551,4 +654,6 @@
     }
     return true;
   });
+
+  maybeAutoRun();
 })();

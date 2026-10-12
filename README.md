@@ -13,6 +13,8 @@ It supports likers, followers, and liked posts — auto-detected from the URL, o
 
 Followers from the `followers` and `verified_followers` pages are collected into **one merged, de-duplicated list** (dedupe is by handle — the same method used for likers). Each record is tagged with which list it came from.
 
+**One Start does both**: from either `/followers` or `/verified_followers`, the extension scrapes the list you are on, then automatically navigates to the other list, scrapes it too, and merges + de-duplicates the result into a single collection.
+
 It runs entirely in your browser while you are already signed into X. No servers, no API keys, no network calls beyond X itself.
 
 ## Install (unpacked)
@@ -36,9 +38,14 @@ It runs entirely in your browser while you are already signed into X. No servers
 4. Press **Copy JSON** to copy to your clipboard, or **Download JSON** to save a file.
 5. The popup shows **how many items were extracted** (for followers: verified vs regular).
 
-### Merging regular + verified followers
+### Automatic regular + verified followers
 
-Run once on `/followers` and once on `/verified_followers` (both in **Extract Followers** mode). The second run **merges into the first collection** and de-duplicates by handle, so you end up with one list containing both groups. Use **Clear** to start a fresh collection.
+Pick **Extract Followers** and press **Start** from either followers page. The extension will:
+1. Scroll the current list to the bottom and collect it.
+2. Automatically open the other followers list for the same profile.
+3. Scroll and collect that too, **merging and de-duplicating by handle**.
+
+You end up with one collection containing both groups (each record tagged `list` / `fromVerifiedList`). The badge and popup show progress like `… · next: verified_followers` while it works. Use **Clear** to start a fresh collection.
 
 ### Settings
 
@@ -63,7 +70,7 @@ Raise the delays if a very large list stops early — X needs time to load each 
     "list": "followers",
     "exportedAt": "2026-10-07T18:50:00.000Z",
     "count": 812,
-    "generator": "X Likes Exporter v1.2.0"
+    "generator": "X Likes Exporter v1.3.0"
   },
   "followers": [
     {
@@ -112,6 +119,7 @@ Missing values are `null`, or omitted (`repostedBy`, `media`).
   - Likers and followers are read from `[data-testid="UserCell"]`; liked posts from `article[data-testid="tweet"]`.
   - When the list is inside a modal, collection is scoped to the dialog (`[aria-modal="true"]` / `[role="dialog"]`) and the scroll container is auto-detected (`[aria-label="Timeline: Liked by"]`, the dialog, a scrollable ancestor of the rows, else the window) — so it works as a page or a modal.
   - On start it merges with a previous run against the same target (same tweet for likers, same profile for followers), so verified + regular followers build one de-duplicated collection.
+  - For followers it stores a small plan in `chrome.storage.local` (`xle_plan`) so that, after finishing the first list, it can navigate to the other list and **auto-resume** the run there, then merge.
 - `src/popup.{html,css,js}` is the control panel: mode select, start/stop, live count, copy, download, clear.
 - Data is mirrored into `chrome.storage.local` (`xle_meta` + `xle_records`) so the popup can read it live.
 

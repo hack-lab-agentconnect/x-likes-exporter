@@ -2,7 +2,7 @@
 
 const META_KEY = "xle_meta";
 const RECORDS_KEY = "xle_records";
-const GENERATOR = "X Likes Exporter v1.2.0";
+const GENERATOR = "X Likes Exporter v1.3.0";
 const matchesX = (url) => /^https:\/\/(x|twitter)\.com\//.test(url || "");
 const onLikesPage = (url) =>
   /^https:\/\/(x|twitter)\.com\/[^/]+\/status\/\d+\/likes/.test(url || "") ||
@@ -110,7 +110,11 @@ $("start").addEventListener("click", async () => {
   const mode = $("mode").value;
   try {
     await chrome.tabs.sendMessage(tab.id, { type: "XLE_START", config, mode });
-    setHint("Scrolling. The on-page badge shows live progress; keep the tab open.");
+    setHint(
+      mode === "followers"
+        ? "Extracting followers — it will open both /followers and /verified_followers automatically."
+        : "Scrolling. The on-page badge shows live progress; keep the tab open."
+    );
   } catch {
     setHint("Could not reach the page. Reload the X tab and try again.", true);
   }

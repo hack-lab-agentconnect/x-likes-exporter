@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "X Likes Exporter",
-  "version": "1.2.0",
-  "description": "Export the likers of an X (Twitter) post, a profile's followers (regular + verified), or your liked posts to JSON by auto-scrolling.",
+  "version": "1.3.0",
+  "description": "Export the likers of an X post, the followers of a profile (regular + verified, automatically), or your liked posts to JSON.",
   "minimum_chrome_version": "102",
   "permissions": [
     "storage",
